@@ -54,14 +54,17 @@ def updateAllDNS(newip, password):
 Parse syslog to extract the IP address of jtwo.org, and see if it has changed
 '''
 password = sys.argv[1]
-txt = subprocess.check_output(["tail","-500","/var/log/syslog"])
+verbose = (len(sys.argv) > 2 and sys.argv[2] == '-v')
+
+txt = subprocess.check_output(["tail","-800","/var/log/syslog"])
 m=re.search('\n.*root@jtwo.*\n(.*)\n',txt)
 if (m and len(m.groups()) > 0):
-	x = m.group(1)
-	m=re.search("net\[(.*)\]",x)
+	x = m.group(0)
+	if verbose: print "Found : \n", x
+	m=re.search("client_address=(\d+\.\d+\.\d+\.\d+)",x)
 	if (m and len(m.groups()) > 0):
-		n = len(m.groups())
-		newip = m.group(n)
+		newip = m.group(1)
+		if verbose: print "Found newip:", newip
 		oldip = subprocess.check_output(["cat","/etc/jtwo_ip"])
 		if (oldip != newip):
 			sendMail(newip)
