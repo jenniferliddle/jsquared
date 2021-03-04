@@ -67,6 +67,8 @@ dark = (now < dawn) or (now > dusk)
 
 if not dark or nightMode:
     c = picamera.PiCamera()
+    c.annotate_background = picamera.Color('black')
+    c.annotate_text = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     sleep(5)
     c.capture(filename)
     c.close()
