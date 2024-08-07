@@ -3,10 +3,17 @@ import machine
 from picographics import PicoGraphics, DISPLAY_INKY_PACK
 from umqtt.simple import MQTTClient
 import network
+import json
 
 # Connect to network
 wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
+
+# mqtt
+SERVER="192.168.1.150"
+ClientID = f'raspberry-sub-{time.time_ns()}'
+topic = "jsquared/inky"
+topic = 'zigbee2mqtt/+'
 
 # Fill in your network name (ssid) and password here:
 ssid = 'LBW2gig'
@@ -24,19 +31,15 @@ graphics.set_pen(0)
 graphics.set_thickness(5)
 graphics.update()
 
-# mqtt
-SERVER="192.168.1.150"
-ClientID = f'raspberry-sub-{time.time_ns()}'
-user = "emqx"
-password = "public"
-topic = "jsquared/inky"
-
+# callback for receiving mqtt messages
 def sub(topic, msg):
     print('received message %s on topic %s' % (msg, topic))
+    j = json.loads(msg)
+    t = j['temperature']
     graphics.set_pen(15)
     graphics.clear()
     graphics.set_pen(0)
-    graphics.text(msg, 20, 60, scale=4)
+    graphics.text(str(t), 20, 60, scale=4)
     graphics.update()
 
 
@@ -59,10 +62,7 @@ def main():
     client.set_callback(sub)
     client.subscribe(topic)
     while True:
-        if True:
-            client.wait_msg()
-        else:
-            client.check_msg()
-            time.sleep(1)
+        client.check_msg()
+        time.sleep(1)
 
 main()
