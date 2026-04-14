@@ -6,14 +6,14 @@ Using a Waveshare LCD display
 <https://files.waveshare.com/upload/2/2d/ILI9488_Data_Sheet.pdf>
 and a Quectel L76 GPS module
 <https://www.quectel.com/ProductDownload/L76-LB.html>
-connected to a raspberry pi pico
+connected to a raspberry pi pico2
 
 Author:	Jennifer Liddle <jennifer@jsquared.co.uk>
         Jenny Bailey <jennyb@jsquared.co.uk>
         
 """
 
-from machine import Pin,SPI,PWM, UART
+from machine import Pin,SPI,PWM, UART, Timer
 import framebuf
 import time
 import random
@@ -22,8 +22,8 @@ from micropython import const
 # Initialise the UART so we can read the NMEA of the GPS from the serial port
 UARTx = const(0)
 BAUDRATE = const(9600)
-PICO_UART_TX_PIN=const(16)
-PICO_UART_RX_PIN=const(17)
+PICO_UART_TX_PIN=const(0)
+PICO_UART_RX_PIN=const(1)
 GPS = UART(UARTx,baudrate=BAUDRATE,tx=Pin(PICO_UART_TX_PIN),rx=Pin(PICO_UART_RX_PIN),timeout=100 ) 
 
 # Initialise the LCD
@@ -34,7 +34,21 @@ LCD_MOSI = const(11)
 LCD_MISO = const(12)
 LCD_BL   = const(13)
 LCD_RST  = const(15)
+TP_CS    = const(16)
+TP_IRQ   = const(17)
 
+IMPERIAL = False		# true for imperial, false for metric
+
+PERIOD = 60	# seconds between calculating distance
+
+satellites = 0
+global speed
+speed = 0
+global distance
+distance = 0
+global new_distance
+new_distance = 0
+    
 class LCD_3inch5(framebuf.FrameBuffer):
 
     def __init__(self):
@@ -50,11 +64,14 @@ class LCD_3inch5(framebuf.FrameBuffer):
         self.cs = Pin(LCD_CS,Pin.OUT)
         self.rst = Pin(LCD_RST,Pin.OUT)
         self.dc = Pin(LCD_DC,Pin.OUT)
-        
+ 
+        self.tp_cs =Pin(TP_CS,Pin.OUT)
+        self.irq = Pin(TP_IRQ,Pin.IN)
     
         self.cs(1)
         self.dc(1)
         self.rst(1)
+        self.tp_cs(1)
         self.spi = SPI(1,60_000_000,sck=Pin(LCD_SCK),mosi=Pin(LCD_MOSI),miso=Pin(LCD_MISO))
               
         self.buffer = bytearray(self.height * self.width * 2)
@@ -219,6 +236,32 @@ class LCD_3inch5(framebuf.FrameBuffer):
             self.spi.write(l_color)
         self.cs(1)
 
+    def touch_get(self): 
+        if self.irq() == 0:
+            self.spi = SPI(1,4_000_000,sck=Pin(LCD_SCK),mosi=Pin(LCD_MOSI),miso=Pin(LCD_MISO))
+            self.tp_cs(0)
+            X_Point = 0
+            Y_Point = 0
+            for i in range(0,3):
+                self.spi.write(bytearray([0XD0]))
+                Read_date = self.spi.read(2)
+                time.sleep_us(10)
+                X_Point=X_Point+(((Read_date[0]<<8)+Read_date[1])>>3)
+                
+                self.spi.write(bytearray([0X90]))
+                Read_date = self.spi.read(2)
+                Y_Point=Y_Point+(((Read_date[0]<<8)+Read_date[1])>>3)
+
+            X_Point=X_Point/3
+            Y_Point=Y_Point/3
+            
+            self.tp_cs(1) 
+            self.spi = SPI(1,40_000_000,sck=Pin(LCD_SCK),mosi=Pin(LCD_MOSI),miso=Pin(LCD_MISO))
+            Result_list = [X_Point,Y_Point]
+            #print(Result_list)
+            return(Result_list)
+        
+        
 # These are the line segments used to display our digits 0..9
 LINE_LENGTH = const(90)
 LINE_WIDTH = const(15)
@@ -357,8 +400,12 @@ def get_satellites(nmea):
 # extract the speed (in kph) from the VTG sentence, but return mph
 def get_speed(nmea):
     #print(nmea)
-    speed = float(nmea.split(",")[7])	# speed in k/h
-    speed = speed * 0.62137119			# speed in mph
+    try:
+        speed = float(nmea.split(",")[7])	# speed in k/h
+    except:
+        speed = 0    
+    if IMPERIAL:
+        speed = speed * 0.62137119			# speed in mph
     return speed
 
 # display a 'J2' at startup, because....well, why not?
@@ -377,13 +424,21 @@ def display_logo():
     time.sleep(5)
 
 # Main display showing speed and number of satellites
-def display_all(satellites, speed):
+def display_all(satellites, speed, distance):
     if (speed >= 10):
         speed = 9.9
         
     digit = int(speed)
     LCD.fill(LCD.WHITE)
     NUMBERS[digit]()
+    
+    if IMPERIAL:
+        d = int(distance*0.62137119*10)/10
+        LCD.text(str(d)+" Miles",10,295,LCD.BLACK)
+    else:
+        d = int(distance*10)/10
+        LCD.text(str(d)+" Kilometers",10,295,LCD.BLACK)
+
     LCD.show_left()
     
     digit = int(speed * 10) % 10
@@ -393,10 +448,24 @@ def display_all(satellites, speed):
     for x in range(0,satellites):
         LCD.fill_rect(LCD.width-((x+1)*20),10,10,10,LCD.BLACK)
     draw_point()
+    if IMPERIAL:
+        LCD.text("Miles / hour",100,295,LCD.BLACK)
+    else:
+        LCD.text("Kilometers / hour",100,295,LCD.BLACK)
+        
     LCD.show_right()
     
+def calc_distance(timer):
+    global distance
+    global new_distance
+    global speed
+    global PERIOD
+    new_distance = distance + speed * PERIOD / 60 / 60
+    #print(speed, PERIOD, distance)
+    
 if __name__=='__main__':
-    opt_level(3)
+    #global satellites, speed, distance
+    #opt_level(3)
     LCD = LCD_3inch5()
     LCD.bl_ctrl(100)
     #print(opt_level())
@@ -404,14 +473,21 @@ if __name__=='__main__':
     
     display_logo()
     
-    satellites = 0
-    speed = 0
+
     new_satellites = 0
     new_speed = 0
-    display_all(satellites,speed)
+    display_all(satellites,speed,distance)
+    
+    #timer = Timer(period=PERIOD*1000, mode=Timer.PERIODIC, callback=lambda distance,speed,PERIOD:distance+(speed*(PERIOD/60/60)) )
+    timer = Timer(period=PERIOD*1000, mode=Timer.PERIODIC, callback=calc_distance )
 
     # Read GPS, extract values, display if values have changed
     while True:
+        x = LCD.touch_get()
+        if x:
+            IMPERIAL = not IMPERIAL
+            display_all(satellites,speed,distance)
+            
         nmea = GPS.readline()
         if (nmea):
             #print(nmea)
@@ -425,8 +501,9 @@ if __name__=='__main__':
             if (nmea[0:3] == "VTG"):
                 new_speed = get_speed(nmea)
 
-        if ( (new_speed != speed) or (new_satellites != satellites) ):
+        if ( (new_speed != speed) or (new_satellites != satellites) or (new_distance != distance) ):
             speed = new_speed
             satellites = new_satellites
-            display_all(satellites,speed)
+            distance = new_distance
+            display_all(satellites,speed,distance)
             
